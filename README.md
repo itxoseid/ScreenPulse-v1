@@ -15,6 +15,8 @@ descriptions are kept.
 
 It is built for Windows and runs in the terminal.
 
+![A ScreenPulse session in Windows PowerShell](docs/terminal.png)
+
 ## How it works
 
 The watch loop has a few stages, each one there to avoid doing expensive work
