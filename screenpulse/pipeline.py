@@ -12,7 +12,7 @@ from .capture import ScreenCapturer, to_jpeg_bytes
 from .config import Settings
 from .db import connect, insert_event
 from .diff import FrameDiffer
-from .needle import HeuristicGate
+from .gate import HeuristicGate
 from .ollama import OllamaClient
 from .winfocus import focus_hint
 

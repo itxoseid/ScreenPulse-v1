@@ -1,12 +1,10 @@
 """
-Pass 3 of the pipeline: a cheap local "is this a meaningful event" gate that runs
-*before* spending a vision-model call.
+The gate between the diff filter and the vision call.
 
-Needle 2 integration is not wired up in v1 (the local model/runtime isn't a hard
-dependency and its API is still rough). This module falls back to a heuristic
-built on the diff signal plus a simple rate limit.
-
-TODO(v1): replace `HeuristicGate` with a real Needle 2 classifier when available.
+Even after the pixel-diff check, not every changed frame is worth an AI call:
+tiny animations, a blinking cursor, a scrolling ticker. This gate holds the call
+back unless the change is large enough to look like a real switch of content,
+and enough time has passed since the last call to stay within budget.
 """
 
 from __future__ import annotations
@@ -15,12 +13,6 @@ import time
 
 
 class HeuristicGate:
-    """
-    Flags a frame as worth analyzing when the change is large enough to plausibly
-    be a window switch / new content, and enough time has passed since the last
-    vision call to stay within budget.
-    """
-
     def __init__(
         self,
         *,

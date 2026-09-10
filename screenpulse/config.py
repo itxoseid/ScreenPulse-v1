@@ -23,7 +23,7 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/"
 
 # moondream describes a screenshot; the text model turns that description into
 # clean structured JSON and also powers the summary / search / report commands.
-VISION_MODEL = os.environ.get("SCREENPULSE_VISION_MODEL", "moondream")
+VISION_MODEL = os.environ.get("SCREENPULSE_VISION_MODEL", "qwen2.5vl:3b")
 TEXT_MODEL = os.environ.get("SCREENPULSE_TEXT_MODEL", "llama3.2:3b")
 
 # Categories the classifier is asked to bucket activity into.
