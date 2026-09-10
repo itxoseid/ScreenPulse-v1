@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "screenpulse"
+version = "0.1.0"
+description = "Local screen-activity watcher powered by Claude vision"
+requires-python = ">=3.10"
+dependencies = [
+    "textual>=0.80.0",
+    "mss>=9.0.1",
+    "Pillow>=10.0.0",
+    "numpy>=1.26.0",
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+screenpulse = "screenpulse.cli:main"
+
+[tool.setuptools]
+packages = ["screenpulse"]
