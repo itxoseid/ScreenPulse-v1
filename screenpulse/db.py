@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -13,14 +13,21 @@ from .config import DB_PATH
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts              TEXT NOT NULL,          -- ISO-8601 local timestamp
+    ts              TEXT NOT NULL,          -- ISO-8601 local time the frame was captured
     app             TEXT NOT NULL,
     activity_summary TEXT NOT NULL,
-    category        TEXT NOT NULL
+    category        TEXT NOT NULL,
+    window_title    TEXT NOT NULL DEFAULT ''  -- foreground window title at capture time
 );
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_category ON events(category);
 """
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(events)")}
+    if "window_title" not in cols:
+        conn.execute("ALTER TABLE events ADD COLUMN window_title TEXT NOT NULL DEFAULT ''")
 
 
 @contextmanager
@@ -29,6 +36,7 @@ def connect(path: Path | str = DB_PATH) -> Iterator[sqlite3.Connection]:
     conn.row_factory = sqlite3.Row
     try:
         conn.executescript(_SCHEMA)
+        _migrate(conn)
         yield conn
         conn.commit()
     finally:
@@ -46,15 +54,25 @@ def insert_event(
     app: str,
     activity_summary: str,
     category: str,
+    window_title: str = "",
     ts: Optional[datetime] = None,
 ) -> int:
     ts = ts or datetime.now()
     cur = conn.execute(
-        "INSERT INTO events (ts, app, activity_summary, category) VALUES (?, ?, ?, ?)",
-        (ts.isoformat(timespec="seconds"), app, activity_summary, category),
+        "INSERT INTO events (ts, app, activity_summary, category, window_title) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ts.isoformat(timespec="seconds"), app, activity_summary, category, window_title),
     )
     conn.commit()
     return int(cur.lastrowid)
+
+
+def prune_events(conn: sqlite3.Connection, keep_days: int) -> int:
+    """Delete events older than keep_days. Returns the number removed."""
+    cutoff = (datetime.now() - timedelta(days=keep_days)).isoformat()
+    cur = conn.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
+    conn.commit()
+    return cur.rowcount
 
 
 def events_for_day(conn: sqlite3.Connection, day: date) -> list[sqlite3.Row]:

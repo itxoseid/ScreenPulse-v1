@@ -5,6 +5,8 @@ All model calls go to the local Ollama text model. No cloud, no API keys.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 from collections import Counter
 from datetime import date, datetime, timedelta
@@ -24,10 +26,10 @@ def _rows_to_text(rows) -> str:
         return "(no rows)"
     keys = rows[0].keys()
     if {"ts", "app", "activity_summary", "category"} <= set(keys):
-        return "\n".join(
-            f"{r['ts']}  [{r['category']}]  {r['app']}: {r['activity_summary']}"
-            for r in rows
-        )
+        def _line(r):
+            title = f" ({r['window_title']})" if "window_title" in keys and r["window_title"] else ""
+            return f"{r['ts']}  [{r['category']}]  {r['app']}{title}: {r['activity_summary']}"
+        return "\n".join(_line(r) for r in rows)
     # Projected/aggregated query: render generically.
     return "\n".join(
         ", ".join(f"{k}={r[k]}" for k in keys) for r in rows
@@ -93,10 +95,13 @@ def search_history(question: str, client: Optional[OllamaClient] = None) -> str:
     with connect() as conn:
         rows = run_query(conn, sql, params)
 
-    if not rows:
-        return f"(query: {sql})\nNo matching activity found."
+    shown_sql = sql if not params else f"{sql}   -- params: {list(params)}"
+    header = f"query: {shown_sql}\n\n"
 
-    return client.generate(
+    if not rows:
+        return header + "No matching activity found."
+
+    answer = client.generate(
         TEXT_MODEL,
         "You are answering a question about someone's screen-activity log.\n\n"
         f"Question: {question}\n\n"
@@ -108,6 +113,33 @@ def search_history(question: str, client: Optional[OllamaClient] = None) -> str:
         num_predict=400,
         temperature=0.5,
     ).strip()
+    return header + answer
+
+
+# ------------------------------------------------------------------------ export
+
+def export_log(fmt: str = "csv", days: Optional[int] = None) -> str:
+    """Return the log as CSV or JSON text. `days` limits to the last N days."""
+    if fmt not in ("csv", "json"):
+        raise ValueError("fmt must be 'csv' or 'json'")
+    sql = "SELECT ts, app, window_title, category, activity_summary FROM events"
+    args: tuple = ()
+    if days:
+        sql += " WHERE ts >= ?"
+        args = ((datetime.now() - timedelta(days=days)).isoformat(),)
+    sql += " ORDER BY ts"
+    with connect() as conn:
+        rows = [dict(r) for r in conn.execute(sql, args).fetchall()]
+
+    if fmt == "json":
+        return json.dumps(rows, indent=2)
+    buf = io.StringIO()
+    writer = csv.DictWriter(
+        buf, fieldnames=["ts", "app", "window_title", "category", "activity_summary"]
+    )
+    writer.writeheader()
+    writer.writerows(rows)
+    return buf.getvalue()
 
 
 # --------------------------------------------------------------------- breakdown

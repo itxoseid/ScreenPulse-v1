@@ -33,11 +33,13 @@ class WatchApp(App):
     CSS = """
     Screen { background: $surface; }
     #status { height: 1; color: $text-muted; padding: 0 1; }
+    #status.paused { color: $text; background: $warning; text-style: bold; }
     #log { border: round $primary; }
     #side { width: 44; border: round $primary; padding: 1; }
     """
     BINDINGS = [
         ("q", "quit", "Quit"),
+        ("p", "toggle_pause", "Pause"),
         ("b", "refresh_breakdown", "Breakdown"),
     ]
 
@@ -72,7 +74,20 @@ class WatchApp(App):
         self.action_refresh_breakdown()
 
     def _set_status(self, text: str) -> None:
-        self.query_one("#status", Static).update(f"● {text}")
+        status = self.query_one("#status", Static)
+        paused = bool(self._pipeline and self._pipeline.paused)
+        status.set_class(paused, "paused")
+        status.update(f"{'⏸ PAUSED — ' if paused else '● '}{text}")
+
+    def action_toggle_pause(self) -> None:
+        if not self._pipeline:
+            return
+        paused = self._pipeline.toggle_pause()
+        self.query_one("#log", RichLog).write(
+            f"[bold yellow]{'⏸ Paused' if paused else '▶ Resumed'}[/] — "
+            f"{'capture stopped' if paused else 'watching again'}\n"
+        )
+        self._set_status("Paused — no capture" if paused else "resuming…")
 
     def _append_event(self, e: Event) -> None:
         self._count += 1

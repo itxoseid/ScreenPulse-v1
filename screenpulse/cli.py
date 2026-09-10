@@ -89,6 +89,29 @@ def _cmd_breakdown(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export(args: argparse.Namespace) -> int:
+    from .reports import export_log
+
+    text = export_log(fmt=args.format, days=args.days)
+    if args.out:
+        from pathlib import Path
+
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"Wrote {args.out}")
+    else:
+        print(text)
+    return 0
+
+
+def _cmd_prune(args: argparse.Namespace) -> int:
+    from .db import connect, prune_events
+
+    with connect() as conn:
+        removed = prune_events(conn, keep_days=args.days)
+    print(f"Removed {removed} event(s) older than {args.days} day(s).")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="screenpulse",
@@ -112,6 +135,16 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--days", type=int, default=1)
     b.add_argument("--by", choices=("category", "app"), default="category")
     b.set_defaults(func=_cmd_breakdown)
+
+    e = sub.add_parser("export", help="export the log as CSV or JSON")
+    e.add_argument("--format", choices=("csv", "json"), default="csv")
+    e.add_argument("--days", type=int, default=None, help="only the last N days")
+    e.add_argument("--out", help="write to this file instead of stdout")
+    e.set_defaults(func=_cmd_export)
+
+    pr = sub.add_parser("prune", help="delete events older than N days")
+    pr.add_argument("--days", type=int, required=True)
+    pr.set_defaults(func=_cmd_prune)
 
     return p
 

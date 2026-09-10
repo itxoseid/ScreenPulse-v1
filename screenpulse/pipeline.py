@@ -14,6 +14,13 @@ from .db import connect, insert_event
 from .diff import FrameDiffer
 from .needle import HeuristicGate
 from .ollama import OllamaClient
+from .winfocus import focus_hint
+
+# Window/process names that pause capture automatically while they are focused.
+_SENSITIVE_HINTS = (
+    "1password", "bitwarden", "keepass", "lastpass", "dashlane", "proton pass",
+    "windows security", "user account control",
+)
 
 
 @dataclass
@@ -23,6 +30,7 @@ class Event:
     app: str
     activity_summary: str
     category: str
+    window_title: str = ""
 
 
 # Called by the TUI (or CLI) for each analyzed event, and for status lines.
@@ -48,10 +56,15 @@ class Pipeline:
             min_seconds_between_calls=self.settings.min_seconds_between_calls
         )
         self._stop = False
+        self.paused = False
         self._recent_summaries: list[str] = []
 
     def stop(self) -> None:
         self._stop = True
+
+    def toggle_pause(self) -> bool:
+        self.paused = not self.paused
+        return self.paused
 
     def run(self) -> None:
         self._stop = False
@@ -60,18 +73,26 @@ class Pipeline:
             while not self._stop:
                 loop_started = time.monotonic()
                 try:
-                    frame = cap.grab()
-                    frac = self._differ.changed_fraction(frame)
+                    hint = focus_hint()
 
-                    if frac >= self.settings.diff_threshold and self._gate.should_analyze(frac):
-                        self.on_status(f"Change {frac:.0%} — analyzing…")
-                        jpeg = to_jpeg_bytes(frame, quality=self.settings.jpeg_quality)
-                        context = " | ".join(self._recent_summaries[-3:])
-                        analysis = self._analyzer.analyze(jpeg, context=context)
-                        self._gate.mark_analyzed()
-                        self._store(conn, analysis)
+                    if self.paused:
+                        self.on_status("Paused — no capture")
+                    elif _is_sensitive(hint):
+                        self.on_status(f"Auto-paused (sensitive app: {hint.split(' — ')[0]})")
                     else:
-                        self.on_status(f"Idle (change {frac:.0%})")
+                        frame = cap.grab()
+                        frac = self._differ.changed_fraction(frame)
+                        if frac >= self.settings.diff_threshold and self._gate.should_analyze(frac):
+                            self.on_status(f"Change {frac:.0%} — analyzing…")
+                            jpeg = to_jpeg_bytes(frame, quality=self.settings.jpeg_quality)
+                            context = " | ".join(self._recent_summaries[-3:])
+                            analysis = self._analyzer.analyze(
+                                jpeg, context=context, focus_hint=hint
+                            )
+                            self._gate.mark_analyzed()
+                            self._store(conn, analysis)
+                        else:
+                            self.on_status(f"Idle (change {frac:.0%})")
                 except KeyboardInterrupt:
                     break
                 except Exception as exc:  # keep the loop alive; surface the error
@@ -88,6 +109,7 @@ class Pipeline:
             app=analysis.app,
             activity_summary=analysis.activity_summary,
             category=analysis.category,
+            window_title=analysis.window_title,
             ts=now,
         )
         self._recent_summaries.append(analysis.activity_summary)
@@ -99,5 +121,11 @@ class Pipeline:
                 app=analysis.app,
                 activity_summary=analysis.activity_summary,
                 category=analysis.category,
+                window_title=analysis.window_title,
             )
         )
+
+
+def _is_sensitive(hint: str) -> bool:
+    low = hint.lower()
+    return any(s in low for s in _SENSITIVE_HINTS)
