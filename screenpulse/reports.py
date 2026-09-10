@@ -118,6 +118,19 @@ def search_history(question: str, client: Optional[OllamaClient] = None) -> str:
 
 # ------------------------------------------------------------------------ export
 
+def _csv_safe(value) -> str:
+    """Neutralise spreadsheet formula injection.
+
+    `activity_summary` / `window_title` are free text taken from the screen, so a
+    cell could start with =, +, -, @ or a control char and be run as a formula
+    when the CSV is opened in Excel or Sheets. Prefix those with an apostrophe.
+    """
+    text = "" if value is None else str(value)
+    if text and text[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + text
+    return text
+
+
 def export_log(fmt: str = "csv", days: Optional[int] = None) -> str:
     """Return the log as CSV or JSON text. `days` limits to the last N days."""
     if fmt not in ("csv", "json"):
@@ -133,12 +146,12 @@ def export_log(fmt: str = "csv", days: Optional[int] = None) -> str:
 
     if fmt == "json":
         return json.dumps(rows, indent=2)
+    fields = ["ts", "app", "window_title", "category", "activity_summary"]
     buf = io.StringIO()
-    writer = csv.DictWriter(
-        buf, fieldnames=["ts", "app", "window_title", "category", "activity_summary"]
-    )
+    writer = csv.DictWriter(buf, fieldnames=fields)
     writer.writeheader()
-    writer.writerows(rows)
+    for r in rows:
+        writer.writerow({k: _csv_safe(r.get(k)) for k in fields})
     return buf.getvalue()
 
 
