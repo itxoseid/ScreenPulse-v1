@@ -4,8 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "screenpulse"
-version = "0.1.0"
-description = "Local screen-activity watcher powered by Claude vision"
+version = "1.0.0"
+description = "A local diary of your computer activity, powered by Ollama"
+license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
     "textual>=0.80.0",

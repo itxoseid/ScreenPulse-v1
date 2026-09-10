@@ -1,106 +1,131 @@
-# ScreenPulse
+# ScreenPulse v1
 
-A local, terminal-native screen-activity watcher. **Fully offline — no API keys,
-no cloud calls.** ScreenPulse periodically grabs a screenshot (in memory only —
-**frames are never written to disk**), throws away anything that hasn't visibly
-changed, and sends the interesting frames to a local Ollama vision model for a
-short description, which a local text model turns into structured JSON:
-`{app, activity_summary, category, timestamp}`. Every analyzed event goes into a
-local SQLite log you can summarize, search, and break down.
+ScreenPulse is a small desktop program that keeps a diary of what you do on your
+computer. Every second or two it takes a screenshot, and when something on screen
+has actually changed it asks a local AI model to describe what it sees. The
+description is boiled down to a single line — which app, what you were doing, and
+a rough category — and saved to a database on your machine. At the end of the day
+you can ask it for a summary, search back through your history in plain English,
+or look at how your time was split between apps.
 
-## Pipeline
+Everything runs locally through [Ollama](https://ollama.com). No account, no API
+key, nothing sent over the internet. Screenshots are held in memory just long
+enough to be looked at and are never written to disk; only the one-line
+descriptions are kept.
 
-1. **Capture** — `mss` grabs the full virtual screen every ~1.5s, kept in RAM.
-2. **Diff filter** — downscaled grayscale pixel delta vs. the previous frame.
-   Below threshold → discarded, no model call.
-3. **Vision call** (`moondream`) — flagged frame → short scene description.
-   POST to `http://localhost:11434/api/chat` (falls back to `/api/generate` for
-   older model manifests).
-4. **Text call** (`qwen3:4b` / `deepseek-r1:7b`) — turns the description into
-   clean JSON. `<think>` blocks from reasoning models are stripped. If the text
-   model is unavailable, ScreenPulse degrades to a second vision-model call.
-5. **SQLite log** — `timestamp, app, activity_summary, category`.
-6. **TUI** — `textual` live stream with a category-coloured feed and a running
-   screen-time breakdown.
+It is built for Windows and runs in the terminal.
 
-## Setup
+## How it works
 
-Requires Python 3.10+ on Windows and a running [Ollama](https://ollama.com).
+The watch loop has a few stages, each one there to avoid doing expensive work
+when it isn't needed:
+
+1. **Capture.** A full-screen grab, taken about every 1.5 seconds and kept only
+   in memory.
+2. **Change check.** The frame is shrunk and compared pixel-by-pixel with the
+   previous one. If almost nothing changed, it is dropped and nothing else runs.
+3. **Describe.** Frames that pass the check are sent to the `moondream` vision
+   model, which returns a sentence or two about what is on screen.
+4. **Structure.** A second model (`qwen3:4b` by default) turns that sentence into
+   tidy fields: `app`, `activity_summary`, `category`, `timestamp`. If this model
+   isn't available, ScreenPulse falls back to a rougher description-only entry.
+5. **Store.** The entry is written to a local SQLite database.
+
+The terminal window shows entries as they come in, colour-coded by category, with
+a running breakdown of the day beside it.
+
+## Installing
+
+You will need Python 3.10 or newer, and Ollama installed and running.
 
 ```bash
+git clone https://github.com/itxoseid/ScreenPulse-v1.git
+cd ScreenPulse-v1
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Pull the models (once):
+Then download the two models (this is a one-time step, a few gigabytes):
 
 ```bash
 ollama pull moondream
-ollama pull qwen3:4b        # or: ollama pull deepseek-r1:7b
+ollama pull qwen3:4b
 ```
 
-> If a model shows in `ollama list` but calls fail with *"does not support
-> generate/chat"*, re-pull it — older model blobs can break after an Ollama
-> upgrade.
+If a model is listed by `ollama list` but calls to it fail with a message about
+not supporting "generate" or "chat", pull it again — older downloads sometimes
+break after Ollama updates itself.
 
-Optional: `pip install -e .` to get a `screenpulse` command instead of
-`python -m screenpulse`.
+## Using it
 
-## Usage
-
-### Live watching
+### Watch
 
 ```bash
 python -m screenpulse watch
 ```
 
-`--no-tui` streams plain text to stdout instead. Stop with `q` (TUI) or `Ctrl+C`.
-Runs even if only the vision model is available (vision-only mode).
+This starts the capture loop and the live view. Press `q` to stop. On Windows you
+can also just double-click `run_screenpulse.bat`, which starts Ollama first if it
+isn't already running.
 
-### End-of-day summary
+### Daily summary
 
 ```bash
 python -m screenpulse summary
 python -m screenpulse summary --date 2026-09-09
 ```
 
-### Searchable history
+Reads the day's entries and writes a short "here is what you did today" in plain
+language.
+
+### Search your history
 
 ```bash
-python -m screenpulse search "what was I doing at 3pm yesterday"
-python -m screenpulse search "how much time did I spend in meetings this week"
+python -m screenpulse search "what was I working on this morning"
+python -m screenpulse search "how much time did I spend reading yesterday"
 ```
 
-The text model turns the question into a read-only `SELECT` against the log,
-then formats an answer from the rows. Only `SELECT`/`WITH` queries are executed.
+Your question is turned into a database query, and the matching entries are
+summarised back to you as an answer. Only read queries are ever run against the
+database.
 
-### Screen-time breakdown
+### Time breakdown
 
 ```bash
 python -m screenpulse breakdown
 python -m screenpulse breakdown --days 7 --by app
 ```
 
-## Storage & privacy
+A simple bar chart of where your time went, grouped by category or by app.
 
-- Screenshots stay in memory; only text summaries are persisted.
-- Everything runs against `localhost` Ollama — nothing leaves the machine.
-- SQLite DB: `%LOCALAPPDATA%\ScreenPulse\screenpulse.db` (override with
-  `SCREENPULSE_DB`).
+## Where things are kept
 
-## Configuration (env vars)
+The database lives at `%LOCALAPPDATA%\ScreenPulse\screenpulse.db`. Delete that
+file to wipe your history. You can point ScreenPulse somewhere else with the
+`SCREENPULSE_DB` environment variable.
 
-| Variable | Default | Meaning |
+## Settings
+
+All optional, set as environment variables:
+
+| Variable | Default | What it does |
 |---|---|---|
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server |
-| `SCREENPULSE_VISION_MODEL` | `moondream` | frame description model |
-| `SCREENPULSE_TEXT_MODEL` | `qwen3:4b` | structuring / summary / search model |
-| `SCREENPULSE_INTERVAL` | `1.5` | seconds between frames |
-| `SCREENPULSE_DIFF_THRESHOLD` | `0.02` | changed-pixel fraction to count as a change |
-| `SCREENPULSE_MIN_CALL_GAP` | `8.0` | min seconds between vision calls |
-| `SCREENPULSE_DB` | `%LOCALAPPDATA%\ScreenPulse\screenpulse.db` | log location |
+| `OLLAMA_HOST` | `http://localhost:11434` | where Ollama is listening |
+| `SCREENPULSE_VISION_MODEL` | `moondream` | model that looks at the screen |
+| `SCREENPULSE_TEXT_MODEL` | `qwen3:4b` | model that writes summaries and structures entries |
+| `SCREENPULSE_INTERVAL` | `1.5` | seconds between screenshots |
+| `SCREENPULSE_DIFF_THRESHOLD` | `0.02` | how much of the screen must change to count |
+| `SCREENPULSE_MIN_CALL_GAP` | `8.0` | shortest gap between AI calls, in seconds |
+| `SCREENPULSE_DB` | `%LOCALAPPDATA%\ScreenPulse\screenpulse.db` | database location |
 
-## Not in v1
+## Known limits
 
-Focus guard, reminders, weekly trends, recap video, achievements, stuck-detector.
+This is a first version. `qwen3:4b` is a small model and sometimes gets relative
+dates wrong ("this afternoon" treated as yesterday); a larger text model handles
+this better if you have one. There is no focus timer, no reminders, no weekly
+trends, and no packaged installer yet.
+
+## Licence
+
+MIT.
