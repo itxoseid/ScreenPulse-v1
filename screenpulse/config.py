@@ -17,6 +17,8 @@ def _data_dir() -> Path:
 
 DATA_DIR = _data_dir()
 DB_PATH = Path(os.environ.get("SCREENPULSE_DB", DATA_DIR / "screenpulse.db"))
+PID_PATH = DATA_DIR / "screenpulse.pid"
+LOG_PATH = DATA_DIR / "watch.log"
 
 # Local Ollama server. No API keys, no cloud calls.
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")

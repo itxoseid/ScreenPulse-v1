@@ -83,6 +83,20 @@ Press `q` to stop, `p` to pause and resume. While paused nothing is captured.
 Capture also pauses automatically while a password manager or a Windows security
 prompt is the focused window.
 
+### Running in the background
+
+Double-click **`run_background.vbs`** (Windows). It starts Ollama if needed and
+runs the watcher with no window, logging to
+`%LOCALAPPDATA%\ScreenPulse\watch.log`. Stop it with **`stop_background.bat`** or:
+
+```bash
+python -m screenpulse stop
+```
+
+`run_screenpulse.bat` is the opposite — it opens the live terminal view so you
+can watch entries arrive. Only one watcher runs at a time; starting a second one
+tells you the first is still going.
+
 ### Daily summary
 
 ```bash

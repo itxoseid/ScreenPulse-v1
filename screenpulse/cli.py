@@ -3,12 +3,35 @@
 from __future__ import annotations
 
 import argparse
+import os
+import signal
 import sys
 from datetime import date, datetime
 
-from .config import TEXT_MODEL, VISION_MODEL, Settings
+from .config import LOG_PATH, PID_PATH, TEXT_MODEL, VISION_MODEL, Settings
 from .db import init_db
 from .ollama import OllamaClient
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        k32 = ctypes.windll.kernel32
+        handle = k32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        ok = k32.GetExitCodeProcess(handle, ctypes.byref(code))
+        k32.CloseHandle(handle)
+        return bool(ok) and code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+    except (OSError, ProcessLookupError):
+        return False
+    return True
 
 
 def _has(models: dict[str, str], name: str) -> bool:
@@ -42,25 +65,65 @@ def _require_ollama(*, need_vision: bool, text_optional: bool = False) -> None:
 def _cmd_watch(args: argparse.Namespace) -> int:
     _require_ollama(need_vision=True, text_optional=True)
     settings = Settings.from_env()
-    if args.no_tui:
-        from .pipeline import Pipeline
 
-        pipe = Pipeline(
-            settings,
-            on_event=lambda e: print(
-                f"{e.ts:%H:%M:%S}  [{e.category}] {e.app}: {e.activity_summary}"
-            ),
-            on_status=lambda s: print(f"  … {s}", file=sys.stderr),
-        )
+    if PID_PATH.exists():
         try:
-            pipe.run()
-        except KeyboardInterrupt:
-            pipe.stop()
+            other = int(PID_PATH.read_text().strip())
+        except ValueError:
+            other = 0
+        if other and other != os.getpid() and _pid_alive(other):
+            raise SystemExit(
+                f"ScreenPulse is already watching (pid {other}). "
+                "Run `screenpulse stop` first."
+            )
+
+    if not args.no_tui:
+        from .tui import run_tui
+
+        run_tui(settings)
         return 0
 
-    from .tui import run_tui
+    from .pipeline import Pipeline
 
-    run_tui(settings)
+    PID_PATH.write_text(str(os.getpid()))
+    pipe = Pipeline(
+        settings,
+        on_event=lambda e: print(
+            f"{e.ts:%H:%M:%S}  [{e.category}] {e.app}: {e.activity_summary}", flush=True
+        ),
+        on_status=lambda s: print(f"  … {s}", file=sys.stderr, flush=True),
+    )
+    for sig in (signal.SIGTERM, getattr(signal, "SIGBREAK", signal.SIGTERM)):
+        signal.signal(sig, lambda *_: pipe.stop())
+    try:
+        pipe.run()
+    except KeyboardInterrupt:
+        pipe.stop()
+    finally:
+        PID_PATH.unlink(missing_ok=True)
+    return 0
+
+
+def _cmd_stop(args: argparse.Namespace) -> int:
+    if not PID_PATH.exists():
+        print("No background ScreenPulse watcher is recorded as running.")
+        return 0
+    try:
+        pid = int(PID_PATH.read_text().strip())
+    except ValueError:
+        PID_PATH.unlink(missing_ok=True)
+        print("Stale pid file removed.")
+        return 0
+    if not _pid_alive(pid):
+        PID_PATH.unlink(missing_ok=True)
+        print(f"Watcher (pid {pid}) was not running; cleaned up.")
+        return 0
+    try:
+        os.kill(pid, getattr(signal, "SIGTERM", signal.SIGINT))
+        print(f"Stopped ScreenPulse watcher (pid {pid}).")
+    except OSError as exc:
+        print(f"Could not stop pid {pid}: {exc}")
+        return 1
     return 0
 
 
@@ -122,6 +185,9 @@ def build_parser() -> argparse.ArgumentParser:
     w = sub.add_parser("watch", help="run the live capture pipeline + TUI")
     w.add_argument("--no-tui", action="store_true", help="plain stdout instead of the TUI")
     w.set_defaults(func=_cmd_watch)
+
+    st = sub.add_parser("stop", help="stop a background (--no-tui) watcher")
+    st.set_defaults(func=_cmd_stop)
 
     s = sub.add_parser("summary", help="generate an end-of-day summary")
     s.add_argument("--date", help="YYYY-MM-DD (default: today)")
