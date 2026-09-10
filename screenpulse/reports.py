@@ -52,9 +52,11 @@ def eod_summary(
         "readable 'here's what you did today' summary: a short narrative paragraph, "
         "then a bulleted list of the main threads of work/activity with rough time "
         "spent, then one line of gentle observation. Keep it under 250 words.\n\n"
+        "Reply with the summary text only. Do not show any reasoning, planning, or "
+        "step-by-step working.\n\n"
         f"{_rows_to_text(rows)}"
     )
-    return client.generate(TEXT_MODEL, prompt, num_predict=700, temperature=0.4).strip()
+    return client.generate(TEXT_MODEL, prompt, num_predict=1400, temperature=0.4).strip()
 
 
 # ------------------------------------------------------------------------ search
@@ -96,11 +98,15 @@ def search_history(question: str, client: Optional[OllamaClient] = None) -> str:
 
     return client.generate(
         TEXT_MODEL,
-        f"Question: {question}\n\nMatching log rows:\n"
+        "You are answering a question about someone's screen-activity log.\n\n"
+        f"Question: {question}\n\n"
+        "These log rows matched the question:\n"
         + _rows_to_text(rows)
-        + "\n\nAnswer the question conversationally based only on these rows.",
-        num_predict=500,
-        temperature=0.4,
+        + "\n\nWrite a short, natural reply (1-3 sentences) that answers the question "
+        "using these rows. Write in prose, not a list, and do not repeat the raw "
+        "field names.",
+        num_predict=400,
+        temperature=0.5,
     ).strip()
 
 

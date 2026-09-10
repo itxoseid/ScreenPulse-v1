@@ -15,7 +15,14 @@ descriptions are kept.
 
 It is built for Windows and runs in the terminal.
 
-![A ScreenPulse session in Windows PowerShell](docs/terminal.png)
+The watch loop, mid-run — a changed frame goes to the model, the line under it is
+what got saved, then the screen goes still and nothing is sent:
+
+![The ScreenPulse watch loop running](docs/watch.png)
+
+Asking about the day afterwards:
+
+![screenpulse breakdown, search and summary](docs/reports.png)
 
 ## How it works
 
@@ -28,9 +35,9 @@ when it isn't needed:
    previous one. If almost nothing changed, it is dropped and nothing else runs.
 3. **Describe.** Frames that pass the check are sent to the `moondream` vision
    model, which returns a sentence or two about what is on screen.
-4. **Structure.** A second model (`qwen3:4b` by default) turns that sentence into
-   tidy fields: `app`, `activity_summary`, `category`, `timestamp`. If this model
-   isn't available, ScreenPulse falls back to a rougher description-only entry.
+4. **Structure.** A second model (`llama3.2:3b` by default) turns that sentence
+   into tidy fields: `app`, `activity_summary`, `category`, `timestamp`. If this
+   model isn't available, ScreenPulse falls back to a description-only entry.
 5. **Store.** The entry is written to a local SQLite database.
 
 The terminal window shows entries as they come in, colour-coded by category, with
@@ -52,12 +59,13 @@ Then download the two models (this is a one-time step, a few gigabytes):
 
 ```bash
 ollama pull moondream
-ollama pull qwen3:4b
+ollama pull llama3.2:3b
 ```
 
 If a model is listed by `ollama list` but calls to it fail with a message about
 not supporting "generate" or "chat", pull it again — older downloads sometimes
-break after Ollama updates itself.
+break after Ollama updates itself. Reasoning models (`qwen3`, `deepseek-r1`) also
+work as the text model but tend to be slower and wordier here.
 
 ## Using it
 
@@ -115,7 +123,7 @@ All optional, set as environment variables:
 |---|---|---|
 | `OLLAMA_HOST` | `http://localhost:11434` | where Ollama is listening |
 | `SCREENPULSE_VISION_MODEL` | `moondream` | model that looks at the screen |
-| `SCREENPULSE_TEXT_MODEL` | `qwen3:4b` | model that writes summaries and structures entries |
+| `SCREENPULSE_TEXT_MODEL` | `llama3.2:3b` | model that writes summaries and structures entries |
 | `SCREENPULSE_INTERVAL` | `1.5` | seconds between screenshots |
 | `SCREENPULSE_DIFF_THRESHOLD` | `0.02` | how much of the screen must change to count |
 | `SCREENPULSE_MIN_CALL_GAP` | `8.0` | shortest gap between AI calls, in seconds |
@@ -123,10 +131,10 @@ All optional, set as environment variables:
 
 ## Known limits
 
-This is a first version. `qwen3:4b` is a small model and sometimes gets relative
-dates wrong ("this afternoon" treated as yesterday); a larger text model handles
-this better if you have one. There is no focus timer, no reminders, no weekly
-trends, and no packaged installer yet.
+This is a first version. The small local models occasionally misread things — a
+vague screen becomes "computer screen", and a relative date like "this afternoon"
+can be read as yesterday. Larger models handle this better if you have one. There
+is no focus timer, no reminders, no weekly trends, and no packaged installer yet.
 
 ## Licence
 
