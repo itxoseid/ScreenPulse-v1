@@ -186,6 +186,13 @@ def _cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_dashboard(args: argparse.Namespace) -> int:
+    from .webui import run_dashboard
+
+    run_dashboard(port=args.port, open_browser=not args.no_browser)
+    return 0
+
+
 def _cmd_prune(args: argparse.Namespace) -> int:
     from .db import connect, prune_events
 
@@ -230,6 +237,11 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--days", type=int, default=None, help="only the last N days")
     e.add_argument("--out", help="write to this file instead of stdout")
     e.set_defaults(func=_cmd_export)
+
+    d = sub.add_parser("dashboard", help="open a local web dashboard (feed, chart, search)")
+    d.add_argument("--port", type=int, default=8765)
+    d.add_argument("--no-browser", action="store_true", help="don't auto-open a browser tab")
+    d.set_defaults(func=_cmd_dashboard)
 
     pr = sub.add_parser("prune", help="delete events older than N days")
     pr.add_argument("--days", type=int, required=True)

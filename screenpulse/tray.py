@@ -52,6 +52,7 @@ class TrayApp:
             self.settings, on_event=self._on_event, on_status=self._on_status
         )
         self._thread = threading.Thread(target=self.pipeline.run, daemon=True)
+        self._dashboard_port: int | None = None
         self.icon = pystray.Icon(
             "screenpulse",
             _dot(_ACTIVE),
@@ -65,6 +66,7 @@ class TrayApp:
                 lambda item: "Resume watching" if self.pipeline.paused else "Pause watching",
                 self._toggle_pause,
             ),
+            pystray.MenuItem("Open dashboard", self._open_dashboard),
             pystray.MenuItem("Open log", self._open_log),
             pystray.MenuItem("Open data folder", self._open_folder),
             pystray.Menu.SEPARATOR,
@@ -78,6 +80,20 @@ class TrayApp:
         icon.icon = _dot(_PAUSED if paused else _ACTIVE)
         icon.title = "ScreenPulse — paused" if paused else "ScreenPulse — watching"
         _log("paused" if paused else "resumed")
+
+    def _open_dashboard(self, icon: pystray.Icon, item) -> None:
+        import webbrowser
+
+        if self._dashboard_port is None:
+            from .webui import run_dashboard
+
+            self._dashboard_port = 8765
+            threading.Thread(
+                target=run_dashboard,
+                kwargs={"port": self._dashboard_port, "open_browser": False},
+                daemon=True,
+            ).start()
+        webbrowser.open(f"http://127.0.0.1:{self._dashboard_port}/")
 
     def _open_log(self, icon: pystray.Icon, item) -> None:
         os.startfile(str(LOG_PATH))  # noqa: S606 (user-initiated, local file)

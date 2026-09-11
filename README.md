@@ -102,6 +102,27 @@ Logs go to `%LOCALAPPDATA%\ScreenPulse\watch.log` either way.
 
 To stop it: **Quit** from the tray menu, or `python -m screenpulse stop`.
 
+### Dashboard
+
+Reading the terminal output works, but a page is easier:
+
+```bash
+python -m screenpulse dashboard
+```
+
+Opens `http://127.0.0.1:8765` in your browser — a local page, served by
+ScreenPulse itself, that only talks to itself (no external requests). It has:
+
+- a **live feed** of entries, auto-refreshing
+- a **breakdown chart** (today / 7 days, by category or app)
+- a **search box** — same natural-language search as the CLI, shown with the
+  query it generated
+- a **daily summary** button
+- a CSV export link
+
+While `tray` is running, the same thing is one click away: right-click the
+tray icon → **Open dashboard**.
+
 ### Daily summary
 
 ```bash

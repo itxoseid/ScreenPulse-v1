@@ -8,7 +8,6 @@ from __future__ import annotations
 import csv
 import io
 import json
-from collections import Counter
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -157,7 +156,8 @@ def export_log(fmt: str = "csv", days: Optional[int] = None) -> str:
 
 # --------------------------------------------------------------------- breakdown
 
-def breakdown(days: int = 1, group_by: str = "category") -> str:
+def breakdown_data(days: int = 1, group_by: str = "category") -> list[dict]:
+    """[{key, count, minutes, share}, ...] sorted by count, most first."""
     if group_by not in ("category", "app"):
         raise ValueError("group_by must be 'category' or 'app'")
     since = (datetime.now() - timedelta(days=days)).isoformat()
@@ -167,17 +167,29 @@ def breakdown(days: int = 1, group_by: str = "category") -> str:
             "WHERE ts >= ? GROUP BY k ORDER BY n DESC",
             (since,),
         ).fetchall()
-    if not rows:
+    total = sum(r["n"] for r in rows) or 1
+    return [
+        {
+            "key": r["k"],
+            "count": r["n"],
+            "minutes": round(r["n"] * MINUTES_PER_EVENT, 1),
+            "share": round(r["n"] / total, 4),
+        }
+        for r in rows
+    ]
+
+
+def breakdown(days: int = 1, group_by: str = "category") -> str:
+    data = breakdown_data(days, group_by)
+    if not data:
         return f"No activity in the last {days} day(s)."
 
-    counts = Counter({r["k"]: r["n"] for r in rows})
-    total = sum(counts.values())
-    peak = max(counts.values())
+    total_events = sum(d["count"] for d in data)
+    peak = max(d["count"] for d in data)
     width = 32
     lines = [f"Screen-time breakdown by {group_by} — last {days} day(s)", ""]
-    for k, n in counts.most_common():
-        bar = "█" * max(1, round(width * n / peak))
-        mins = n * MINUTES_PER_EVENT
-        lines.append(f"{k[:18]:<18} {bar:<{width}} {mins:6.1f} min  ({n/total:.0%})")
-    lines += ["", f"~{total * MINUTES_PER_EVENT:.0f} min across {total} analyzed events"]
+    for d in data:
+        bar = "█" * max(1, round(width * d["count"] / peak))
+        lines.append(f"{d['key'][:18]:<18} {bar:<{width}} {d['minutes']:6.1f} min  ({d['share']:.0%})")
+    lines += ["", f"~{total_events * MINUTES_PER_EVENT:.0f} min across {total_events} analyzed events"]
     return "\n".join(lines)
