@@ -62,10 +62,8 @@ def _require_ollama(*, need_vision: bool, text_optional: bool = False) -> None:
             raise SystemExit(msg)
 
 
-def _cmd_watch(args: argparse.Namespace) -> int:
-    _require_ollama(need_vision=True, text_optional=True)
-    settings = Settings.from_env()
-
+def _claim_single_instance() -> None:
+    """Raise SystemExit if another ScreenPulse watcher/tray is already running."""
     if PID_PATH.exists():
         try:
             other = int(PID_PATH.read_text().strip())
@@ -76,16 +74,26 @@ def _cmd_watch(args: argparse.Namespace) -> int:
                 f"ScreenPulse is already watching (pid {other}). "
                 "Run `screenpulse stop` first."
             )
+    PID_PATH.write_text(str(os.getpid()))
+
+
+def _cmd_watch(args: argparse.Namespace) -> int:
+    _require_ollama(need_vision=True, text_optional=True)
+    settings = Settings.from_env()
 
     if not args.no_tui:
+        _claim_single_instance()
         from .tui import run_tui
 
-        run_tui(settings)
+        try:
+            run_tui(settings)
+        finally:
+            PID_PATH.unlink(missing_ok=True)
         return 0
 
+    _claim_single_instance()
     from .pipeline import Pipeline
 
-    PID_PATH.write_text(str(os.getpid()))
     pipe = Pipeline(
         settings,
         on_event=lambda e: print(
@@ -99,6 +107,18 @@ def _cmd_watch(args: argparse.Namespace) -> int:
         pipe.run()
     except KeyboardInterrupt:
         pipe.stop()
+    finally:
+        PID_PATH.unlink(missing_ok=True)
+    return 0
+
+
+def _cmd_tray(args: argparse.Namespace) -> int:
+    _require_ollama(need_vision=True, text_optional=True)
+    _claim_single_instance()
+    from .tray import run_tray
+
+    try:
+        run_tray(Settings.from_env())
     finally:
         PID_PATH.unlink(missing_ok=True)
     return 0
@@ -186,8 +206,11 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--no-tui", action="store_true", help="plain stdout instead of the TUI")
     w.set_defaults(func=_cmd_watch)
 
-    st = sub.add_parser("stop", help="stop a background (--no-tui) watcher")
+    st = sub.add_parser("stop", help="stop a background (--no-tui or tray) watcher")
     st.set_defaults(func=_cmd_stop)
+
+    tr = sub.add_parser("tray", help="run the watcher with a system tray icon")
+    tr.set_defaults(func=_cmd_tray)
 
     s = sub.add_parser("summary", help="generate an end-of-day summary")
     s.add_argument("--date", help="YYYY-MM-DD (default: today)")

@@ -24,7 +24,7 @@ echo. >> "%LOG%"
 echo ==== started %DATE% %TIME% ==== >> "%LOG%"
 
 REM /b: no new window (pythonw has none anyway); output goes to the log file.
-start "" /b "%PYW%" -m screenpulse watch --no-tui >> "%LOG%" 2>&1
+start "" /b "%PYW%" -m screenpulse tray >> "%LOG%" 2>&1
 
 REM Close this window immediately - the watcher keeps running detached.
 exit

@@ -85,14 +85,22 @@ prompt is the focused window.
 
 ### Running in the background
 
-Double-click **`run_screenpulse.bat`** (Windows). It starts Ollama if needed,
-launches the watcher with no window (via `pythonw`, logging to
-`%LOCALAPPDATA%\ScreenPulse\watch.log`), and closes itself immediately — the
-watcher keeps running detached. Only one watcher runs at a time; running the
-`.bat` again while one is active leaves it alone.
+```bash
+python -m screenpulse tray
+```
 
-To stop it: end the `pythonw.exe` process (Task Manager) or run
-`python -m screenpulse stop` from the project folder.
+Runs the same watcher with a **system tray icon** instead of a console: green
+while watching, amber while paused, red on an error. Hover it for the most
+recent activity; right-click for **Pause / Resume**, **Open log**, **Open data
+folder**, and **Quit**.
+
+Double-click **`run_screenpulse.bat`** (Windows) to get the same thing with no
+window at all — it starts Ollama if needed, launches the tray icon via
+`pythonw`, and closes its own console immediately. Only one watcher runs at a
+time; running it again while one is active leaves the existing one alone.
+Logs go to `%LOCALAPPDATA%\ScreenPulse\watch.log` either way.
+
+To stop it: **Quit** from the tray menu, or `python -m screenpulse stop`.
 
 ### Daily summary
 
