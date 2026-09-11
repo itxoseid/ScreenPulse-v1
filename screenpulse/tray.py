@@ -1,9 +1,11 @@
 """System tray front-end for the watch pipeline.
 
 Runs the same Pipeline as `watch --no-tui`, but with a tray icon instead of a
-console: right-click for pause/resume, the log, the data folder, and quit. The
-icon colour reflects status (watching / paused / error), and hovering it shows
-the most recent entry.
+console: right-click for pause/resume, the dashboard, the log, the data
+folder, and quit. The icon colour reflects status — green while watching,
+amber while paused, a distinct colour once you've been on the same app long
+enough to count as a "session" (see pipeline.py), red on an error — and
+hovering it shows what's happening right now.
 """
 
 from __future__ import annotations
@@ -11,17 +13,19 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import time
 from datetime import datetime
 
 import pystray
 from PIL import Image, ImageDraw
 
 from .config import DATA_DIR, LOG_PATH, Settings
-from .pipeline import Event, Pipeline
+from .pipeline import Event, Pipeline, Session
 
-_ACTIVE = (90, 200, 130)   # green: watching
-_PAUSED = (230, 190, 90)   # amber: paused
-_ERROR = (230, 90, 90)     # red: something went wrong
+_ACTIVE = (90, 200, 130)     # green: watching
+_PAUSED = (230, 190, 90)     # amber: paused
+_RECORDING = (235, 130, 60)  # orange: on the same app long enough to be a session
+_ERROR = (230, 90, 90)       # red: something went wrong
 
 
 def _dot(color: tuple[int, int, int]) -> Image.Image:
@@ -49,10 +53,17 @@ class TrayApp:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         _log("tray started")
         self.pipeline = Pipeline(
-            self.settings, on_event=self._on_event, on_status=self._on_status
+            self.settings,
+            on_event=self._on_event,
+            on_status=self._on_status,
+            on_session=self._on_session,
         )
         self._thread = threading.Thread(target=self.pipeline.run, daemon=True)
+        self._ticker = threading.Thread(target=self._tick_loop, daemon=True)
         self._dashboard_port: int | None = None
+        self._last_event_title = "ScreenPulse — watching"
+        self._error: str | None = None
+        self._running = True
         self.icon = pystray.Icon(
             "screenpulse",
             _dot(_ACTIVE),
@@ -77,9 +88,8 @@ class TrayApp:
 
     def _toggle_pause(self, icon: pystray.Icon, item) -> None:
         paused = self.pipeline.toggle_pause()
-        icon.icon = _dot(_PAUSED if paused else _ACTIVE)
-        icon.title = "ScreenPulse — paused" if paused else "ScreenPulse — watching"
         _log("paused" if paused else "resumed")
+        self._refresh_icon()
 
     def _open_dashboard(self, icon: pystray.Icon, item) -> None:
         import webbrowser
@@ -103,25 +113,62 @@ class TrayApp:
 
     def _quit(self, icon: pystray.Icon, item) -> None:
         _log("quit requested")
+        self._running = False
         self.pipeline.stop()
         icon.stop()
 
     def _on_event(self, e: Event) -> None:
         _log(f"[{e.category}] {e.app}: {e.activity_summary}")
-        if not self.pipeline.paused:
-            self.icon.title = f"ScreenPulse — {e.category}: {e.app}"[:127]
-            self.icon.icon = _dot(_ACTIVE)
+        self._error = None
+        self._last_event_title = f"ScreenPulse — {e.category}: {e.app}"[:127]
+        self._refresh_icon()
 
     def _on_status(self, status: str) -> None:
         _log(status)
-        if status.lower().startswith("error"):
+        self._error = status if status.lower().startswith("error") else None
+        self._refresh_icon()
+
+    def _on_session(self, s: Session) -> None:
+        mins = s.duration_seconds / 60
+        _log(f"session closed: {s.app} ({mins:.0f} min) — {s.activity_summary}")
+
+    # ---------------------------------------------------------------- icon
+
+    def _refresh_icon(self) -> None:
+        if self.pipeline.paused:
+            self.icon.icon = _dot(_PAUSED)
+            self.icon.title = "ScreenPulse — paused"
+            return
+
+        rec = self.pipeline.current_session()
+        if rec and rec["recording"]:
+            mins, secs = divmod(int(rec["elapsed_seconds"]), 60)
+            self.icon.icon = _dot(_RECORDING)
+            self.icon.title = f"ScreenPulse — recording: {rec['app']} ({mins}:{secs:02d})"[:127]
+            return
+
+        if self._error:
             self.icon.icon = _dot(_ERROR)
-            self.icon.title = f"ScreenPulse — {status}"[:127]
+            self.icon.title = f"ScreenPulse — {self._error}"[:127]
+            return
+
+        self.icon.icon = _dot(_ACTIVE)
+        self.icon.title = self._last_event_title
+
+    def _tick_loop(self) -> None:
+        # Ticks the "recording: App (mm:ss)" title even between events/status
+        # updates, so the timer visibly counts up while pystray's own loop
+        # runs on the main thread.
+        while self._running:
+            time.sleep(2)
+            if self._running:
+                self._refresh_icon()
 
     # ------------------------------------------------------------------- run
 
     def run(self) -> None:
         self._thread.start()
+        self._ticker.start()
         self.icon.run()  # blocks until Quit; the pipeline thread is a daemon
 
 

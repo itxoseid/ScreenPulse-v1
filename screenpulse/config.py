@@ -19,6 +19,7 @@ DATA_DIR = _data_dir()
 DB_PATH = Path(os.environ.get("SCREENPULSE_DB", DATA_DIR / "screenpulse.db"))
 PID_PATH = DATA_DIR / "screenpulse.pid"
 LOG_PATH = DATA_DIR / "watch.log"
+CURRENT_SESSION_PATH = DATA_DIR / "current_session.json"
 
 # Local Ollama server. No API keys, no cloud calls.
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
@@ -54,6 +55,7 @@ class Settings:
     diff_downscale: int = 16               # downscale factor before diffing
     min_seconds_between_calls: float = 8.0 # rate-limit the (local) vision calls
     jpeg_quality: int = 60                 # quality for the frame sent to moondream
+    min_session_seconds: float = 60.0      # how long on one app before it's a "session"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -66,5 +68,8 @@ class Settings:
             diff_threshold=_f("SCREENPULSE_DIFF_THRESHOLD", cls.diff_threshold),
             min_seconds_between_calls=_f(
                 "SCREENPULSE_MIN_CALL_GAP", cls.min_seconds_between_calls
+            ),
+            min_session_seconds=_f(
+                "SCREENPULSE_MIN_SESSION_SECONDS", cls.min_session_seconds
             ),
         )

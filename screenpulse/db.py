@@ -21,6 +21,22 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_category ON events(category);
+
+-- A session is "you stayed on roughly the same app/window for a stretch",
+-- built from watching the foreground window switch, not from AI calls.
+-- Only sessions that ran at least Settings.min_session_seconds get kept.
+CREATE TABLE IF NOT EXISTS sessions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    start_ts        TEXT NOT NULL,
+    end_ts          TEXT NOT NULL,
+    duration_sec    INTEGER NOT NULL,
+    app             TEXT NOT NULL,
+    window_title    TEXT NOT NULL DEFAULT '',
+    category        TEXT NOT NULL DEFAULT 'other',
+    activity_summary TEXT NOT NULL DEFAULT '',
+    event_count     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(start_ts);
 """
 
 
@@ -68,11 +84,97 @@ def insert_event(
 
 
 def prune_events(conn: sqlite3.Connection, keep_days: int) -> int:
-    """Delete events older than keep_days. Returns the number removed."""
+    """Delete events (and sessions) older than keep_days. Returns rows removed."""
     cutoff = (datetime.now() - timedelta(days=keep_days)).isoformat()
     cur = conn.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
+    conn.execute("DELETE FROM sessions WHERE start_ts < ?", (cutoff,))
     conn.commit()
     return cur.rowcount
+
+
+def insert_session(
+    conn: sqlite3.Connection,
+    *,
+    start_ts: datetime,
+    end_ts: datetime,
+    app: str,
+    window_title: str = "",
+    category: str = "other",
+    activity_summary: str = "",
+    event_count: int = 0,
+) -> int:
+    duration = max(0, int((end_ts - start_ts).total_seconds()))
+    cur = conn.execute(
+        "INSERT INTO sessions "
+        "(start_ts, end_ts, duration_sec, app, window_title, category, "
+        " activity_summary, event_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            start_ts.isoformat(timespec="seconds"),
+            end_ts.isoformat(timespec="seconds"),
+            duration,
+            app,
+            window_title,
+            category,
+            activity_summary,
+            event_count,
+        ),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def recent_sessions(conn: sqlite3.Connection, limit: int = 30) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM sessions ORDER BY start_ts DESC LIMIT ?", (limit,)
+    ).fetchall()
+
+
+def upsert_session(
+    conn: sqlite3.Connection,
+    *,
+    session_id: Optional[int],
+    start_ts: datetime,
+    end_ts: datetime,
+    app: str,
+    window_title: str = "",
+    category: str = "other",
+    activity_summary: str = "",
+    event_count: int = 0,
+) -> int:
+    """Insert a session, or update it in place if `session_id` is given.
+
+    Called repeatedly while a session is still in progress (not just once it
+    closes), so a session survives an abrupt kill of the process - all that's
+    lost is however many seconds since the last write, not the whole thing.
+    """
+    if session_id is None:
+        return insert_session(
+            conn,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            app=app,
+            window_title=window_title,
+            category=category,
+            activity_summary=activity_summary,
+            event_count=event_count,
+        )
+    duration = max(0, int((end_ts - start_ts).total_seconds()))
+    conn.execute(
+        "UPDATE sessions SET end_ts=?, duration_sec=?, app=?, window_title=?, "
+        "category=?, activity_summary=?, event_count=? WHERE id=?",
+        (
+            end_ts.isoformat(timespec="seconds"),
+            duration,
+            app,
+            window_title,
+            category,
+            activity_summary,
+            event_count,
+            session_id,
+        ),
+    )
+    conn.commit()
+    return session_id
 
 
 def events_for_day(conn: sqlite3.Connection, day: date) -> list[sqlite3.Row]:

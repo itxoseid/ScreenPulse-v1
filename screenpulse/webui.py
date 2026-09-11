@@ -15,9 +15,12 @@ from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from .config import PID_PATH
-from .db import connect, recent_events
+from .config import CURRENT_SESSION_PATH, PID_PATH, Settings
+from .db import connect, recent_events, recent_sessions
 from .reports import breakdown_data, eod_summary, export_log, search_history
+
+_MIN_SESSION_SECONDS = Settings.from_env().min_session_seconds
+_STALE_AFTER_SECONDS = 30  # if the session file hasn't moved in this long, the watcher died
 
 _CATEGORY_COLOR = {
     "coding": "#7ed697",
@@ -45,6 +48,32 @@ def _pid_running() -> bool:
     from .cli import _pid_alive  # local import: avoid a cycle at module load
 
     return _pid_alive(pid)
+
+
+def _current_session() -> dict | None:
+    """Read the live in-progress session written by the pipeline, if any and
+    if it's fresh (a stale file means the watcher died without cleaning up)."""
+    if not CURRENT_SESSION_PATH.exists():
+        return None
+    try:
+        data = json.loads(CURRENT_SESSION_PATH.read_text(encoding="utf-8"))
+        last_seen = datetime.fromisoformat(data["last_seen_ts"])
+        start = datetime.fromisoformat(data["start_ts"])
+    except (OSError, ValueError, KeyError):
+        return None
+
+    now = datetime.now()
+    if (now - last_seen).total_seconds() > _STALE_AFTER_SECONDS:
+        return None
+
+    elapsed = (now - start).total_seconds()
+    return {
+        "app": data.get("app", ""),
+        "window_title": data.get("window_title", ""),
+        "category": data.get("category", "other"),
+        "elapsed_seconds": elapsed,
+        "recording": elapsed >= _MIN_SESSION_SECONDS,
+    }
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -87,6 +116,17 @@ class _Handler(BaseHTTPRequestHandler):
 
         if url.path == "/api/status":
             self._json({"watching": _pid_running()})
+            return
+
+        if url.path == "/api/session":
+            self._json(_current_session())
+            return
+
+        if url.path == "/api/sessions":
+            limit = int(q.get("limit", ["20"])[0])
+            with connect() as conn:
+                rows = [dict(r) for r in recent_sessions(conn, limit)]
+            self._json(rows)
             return
 
         if url.path == "/api/events":
@@ -169,7 +209,7 @@ _PAGE = r"""<!doctype html>
 <style>
   :root {
     --bg: #17171f; --panel: #1e1e29; --border: #2c2c3a; --fg: #d2d4de;
-    --dim: #8a8ca0; --accent: #7ed697; --amber: #e6be5a; --red: #e65a5a;
+    --dim: #8a8ca0; --accent: #7ed697; --amber: #e6be5a; --red: #e65a5a; --rec: #eb823c;
   }
   * { box-sizing: border-box; }
   body {
@@ -184,6 +224,17 @@ _PAGE = r"""<!doctype html>
   #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); }
   #dot.on { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
   #statusText { color: var(--dim); font-size: 12px; }
+  #recBadge {
+    display: none; align-items: center; gap: 6px; font-size: 12px;
+    color: var(--rec); border: 1px solid var(--rec); border-radius: 999px;
+    padding: 3px 10px 3px 8px;
+  }
+  #recBadge.on { display: inline-flex; }
+  #recBadge .rdot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--rec);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
   main {
     display: grid; grid-template-columns: 1.3fr 1fr; gap: 18px;
     padding: 18px 20px; max-width: 1200px; margin: 0 auto;
@@ -197,16 +248,19 @@ _PAGE = r"""<!doctype html>
     margin: 0 0 12px; font-size: 12px; text-transform: uppercase;
     letter-spacing: .08em; color: var(--dim); font-weight: 600;
   }
-  #feed { max-height: 520px; overflow-y: auto; }
-  .ev { padding: 8px 0; border-bottom: 1px solid var(--border); }
-  .ev:last-child { border-bottom: none; }
-  .ev .top { display: flex; gap: 8px; align-items: baseline; }
-  .ev .time { color: var(--dim); font-size: 12px; }
+  #feed, #sessions { max-height: 340px; overflow-y: auto; }
+  .ev, .sess { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .ev:last-child, .sess:last-child { border-bottom: none; }
+  .ev .top, .sess .top { display: flex; gap: 8px; align-items: baseline; }
+  .ev .time, .sess .time { color: var(--dim); font-size: 12px; }
   .tag {
     font-size: 11px; padding: 1px 7px; border-radius: 999px; font-weight: 600;
   }
-  .ev .app { font-weight: 600; }
-  .ev .summary { color: var(--dim); margin-top: 2px; font-size: 13px; }
+  .ev .app, .sess .app { font-weight: 600; }
+  .ev .summary, .sess .summary { color: var(--dim); margin-top: 2px; font-size: 13px; }
+  .sess .dur {
+    margin-left: auto; font-size: 12px; color: var(--dim); font-weight: 600;
+  }
   .bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   .bar-row .label { width: 100px; flex-shrink: 0; font-size: 12px; }
   .bar-track { flex: 1; background: var(--border); border-radius: 6px; height: 16px; overflow: hidden; }
@@ -232,6 +286,7 @@ _PAGE = r"""<!doctype html>
   <span id="dot"></span>
   <h1>ScreenPulse</h1>
   <span id="statusText">checking…</span>
+  <span id="recBadge"><span class="rdot"></span><span id="recText"></span></span>
   <span style="flex:1"></span>
   <a class="muted" href="/api/export?format=csv" style="color:var(--dim)">export csv</a>
 </header>
@@ -239,7 +294,11 @@ _PAGE = r"""<!doctype html>
 <main>
   <div>
     <div class="panel">
-      <h2>Live feed</h2>
+      <h2>Sessions <span class="muted">— what you did, merged into blocks once you're on it a minute or more</span></h2>
+      <div id="sessions">Loading…</div>
+    </div>
+    <div class="panel">
+      <h2>Live feed <span class="muted">— raw snapshots, every time the screen changes</span></h2>
       <div id="feed">Loading…</div>
     </div>
   </div>
@@ -295,6 +354,50 @@ async function refreshStatus() {
 }
 
 function timeOf(ts) { return ts.split("T")[1]?.slice(0,8) ?? ts; }
+function fmtMinSec(totalSec) {
+  const m = Math.floor(totalSec / 60), s = Math.floor(totalSec % 60);
+  return `${m}:${String(s).padStart(2,"0")}`;
+}
+
+async function refreshSession() {
+  const badge = document.getElementById("recBadge");
+  try {
+    const r = await fetch("/api/session");
+    const s = await r.json();
+    if (s && s.recording) {
+      badge.classList.add("on");
+      document.getElementById("recText").textContent =
+        `recording: ${s.app} (${fmtMinSec(s.elapsed_seconds)})`;
+      return;
+    }
+  } catch (e) { /* fall through to hiding it */ }
+  badge.classList.remove("on");
+}
+
+async function refreshSessions() {
+  const r = await fetch("/api/sessions?limit=20");
+  const rows = await r.json();
+  const el = document.getElementById("sessions");
+  if (!rows.length) {
+    el.innerHTML = '<p class="muted">Nothing has run a full minute yet — stay on something a bit and it\'ll show up here.</p>';
+    return;
+  }
+  el.innerHTML = rows.map(s => {
+    const c = CAT_COLOR[s.category] || CAT_FALLBACK;
+    const mins = Math.round(s.duration_sec / 60) || 1;
+    return `
+    <div class="sess">
+      <div class="top">
+        <span class="time">${timeOf(s.start_ts)}–${timeOf(s.end_ts)}</span>
+        <span class="tag" style="background:${c}22;color:${c}">${escapeHtml(s.category)}</span>
+        <span class="app">${escapeHtml(s.app)}</span>
+        <span class="dur">${mins} min</span>
+      </div>
+      <div class="summary">${escapeHtml(s.activity_summary || "(no description)")}</div>
+    </div>
+  `;
+  }).join("");
+}
 
 async function refreshFeed() {
   const r = await fetch("/api/events?limit=40");
@@ -379,9 +482,13 @@ document.getElementById("summaryBtn").addEventListener("click", async () => {
 });
 
 refreshStatus();
+refreshSession();
+refreshSessions();
 refreshFeed();
 refreshBars();
 setInterval(refreshStatus, 5000);
+setInterval(refreshSession, 2000);
+setInterval(refreshSessions, 6000);
 setInterval(refreshFeed, 4000);
 </script>
 </body>

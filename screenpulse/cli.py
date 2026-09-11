@@ -100,6 +100,11 @@ def _cmd_watch(args: argparse.Namespace) -> int:
             f"{e.ts:%H:%M:%S}  [{e.category}] {e.app}: {e.activity_summary}", flush=True
         ),
         on_status=lambda s: print(f"  … {s}", file=sys.stderr, flush=True),
+        on_session=lambda s: print(
+            f"{s.start:%H:%M:%S}-{s.end:%H:%M:%S}  ({s.duration_seconds/60:.0f} min)  "
+            f"[{s.category}] {s.app}: {s.activity_summary}",
+            flush=True,
+        ),
     )
     for sig in (signal.SIGTERM, getattr(signal, "SIGBREAK", signal.SIGTERM)):
         signal.signal(sig, lambda *_: pipe.stop())

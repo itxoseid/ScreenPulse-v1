@@ -70,6 +70,12 @@ when it isn't needed:
 The terminal shows entries as they come in, colour-coded by category, with a
 running breakdown of the day beside it.
 
+Separately, ScreenPulse watches which window has focus (no AI call needed for
+this part) and merges consecutive time on the same app into a **session**:
+`17:11–17:16 (5 min) — Netflix: watching Raid 2` instead of five near-identical
+snapshot lines. Once you've been on one thing for a minute or more, it's kept;
+shorter switches aren't. See [Sessions](#sessions) below.
+
 ## Using it
 
 ### Watch
@@ -90,9 +96,10 @@ python -m screenpulse tray
 ```
 
 Runs the same watcher with a **system tray icon** instead of a console: green
-while watching, amber while paused, red on an error. Hover it for the most
-recent activity; right-click for **Pause / Resume**, **Open log**, **Open data
-folder**, and **Quit**.
+while watching, amber while paused, **orange once you've been on the same app
+long enough to count as a session** (hover to see which app and for how long),
+red on an error. Right-click for **Pause / Resume**, **Open dashboard**, **Open
+log**, **Open data folder**, and **Quit**.
 
 Double-click **`run_screenpulse.bat`** (Windows) to get the same thing with no
 window at all — it starts Ollama if needed, launches the tray icon via
@@ -101,6 +108,28 @@ time; running it again while one is active leaves the existing one alone.
 Logs go to `%LOCALAPPDATA%\ScreenPulse\watch.log` either way.
 
 To stop it: **Quit** from the tray menu, or `python -m screenpulse stop`.
+
+### Sessions
+
+While the raw log has one row per AI call (every time the screen visibly
+changes), a **session** is "you stayed on roughly the same app for a stretch" —
+built by watching the focused window switch, not by another AI call. A session
+is only kept once it runs **60 seconds or more** (`SCREENPULSE_MIN_SESSION_SECONDS`);
+quick app-switches don't clutter the log.
+
+While one is running past that mark, both the tray icon and the dashboard show
+it live — a pulsing **"recording: App (mm:ss)"** indicator — so you can tell
+at a glance that ScreenPulse has noticed you're settled into something. Once
+you switch away, it's written as one clean block:
+
+```
+17:11–17:16 (5 min)  browsing  Netflix: watching Raid 2
+```
+
+instead of five near-identical snapshot lines. It's written progressively as
+it runs (not only when it ends), so killing the process — a crash, Task
+Manager, the classic Windows way of closing things — loses at most the last
+couple of seconds, not the whole session.
 
 ### Dashboard
 
@@ -113,7 +142,9 @@ python -m screenpulse dashboard
 Opens `http://127.0.0.1:8765` in your browser — a local page, served by
 ScreenPulse itself, that only talks to itself (no external requests). It has:
 
-- a **live feed** of entries, auto-refreshing
+- a **live "recording" indicator** when you've been on one thing a minute or more
+- a **sessions panel** — the clean merged blocks described above
+- a **live feed** of raw entries, auto-refreshing
 - a **breakdown chart** (today / 7 days, by category or app)
 - a **search box** — same natural-language search as the CLI, shown with the
   query it generated
@@ -162,7 +193,7 @@ python -m screenpulse prune --days 30     # delete entries older than 30 days
 
 ## What gets stored
 
-One SQLite table, `events`:
+Two SQLite tables. `events` — one row per AI call:
 
 | Column | Example | Notes |
 |---|---|---|
@@ -173,9 +204,19 @@ One SQLite table, `events`:
 | `activity_summary` | `Reading a GitHub pull request` | one sentence from the models |
 | `category` | `browsing` | one of a fixed set (coding, reading, writing, meeting, …) |
 
-Indexes on `ts` and `category` keep search and breakdown fast. The database file
-is at `%LOCALAPPDATA%\ScreenPulse\screenpulse.db` — delete it to wipe everything,
-or point elsewhere with `SCREENPULSE_DB`.
+`sessions` — one row per stretch of time on the same app, kept only once it
+runs `SCREENPULSE_MIN_SESSION_SECONDS` or more:
+
+| Column | Example | Notes |
+|---|---|---|
+| `start_ts` / `end_ts` | `2026-09-10T17:11:00` / `…T17:16:00` | when the session ran |
+| `duration_sec` | `300` | `end_ts - start_ts`, kept as a plain number for aggregation |
+| `app`, `window_title`, `category`, `activity_summary` | same shape as `events` | taken from whichever AI calls happened during the session |
+| `event_count` | `4` | how many `events` rows fed into this session |
+
+Indexes on `ts` / `start_ts` and `category` keep search, breakdown, and the
+dashboard fast. The database file is at `%LOCALAPPDATA%\ScreenPulse\screenpulse.db`
+— delete it to wipe everything, or point elsewhere with `SCREENPULSE_DB`.
 
 ## Settings
 
@@ -189,6 +230,7 @@ All optional, set as environment variables:
 | `SCREENPULSE_INTERVAL` | `1.5` | seconds between screenshots |
 | `SCREENPULSE_DIFF_THRESHOLD` | `0.02` | how much of the screen must change to count |
 | `SCREENPULSE_MIN_CALL_GAP` | `8.0` | shortest gap between AI calls, in seconds |
+| `SCREENPULSE_MIN_SESSION_SECONDS` | `60.0` | how long on one app before it counts as a session |
 | `SCREENPULSE_DB` | `%LOCALAPPDATA%\ScreenPulse\screenpulse.db` | database location |
 
 ## Privacy
