@@ -11,8 +11,10 @@ cd /d "%PROJECT_DIR%"
 set "PYW=pythonw"
 if exist "%PROJECT_DIR%\.venv\Scripts\pythonw.exe" set "PYW=%PROJECT_DIR%\.venv\Scripts\pythonw.exe"
 
-REM Start Ollama if it isn't already running.
-tasklist /fi "imagename eq ollama.exe" | find /i "ollama.exe" >nul
+REM Start Ollama only if nothing is actually answering on its port yet.
+REM (A process-name check here is racy - if it misses a starting-up Ollama
+REM you get a second server fighting the first for the GPU and the port.)
+curl.exe -s -o nul -m 2 http://localhost:11434/api/tags
 if errorlevel 1 (
     start "" /b ollama serve
     timeout /t 4 /nobreak >nul
